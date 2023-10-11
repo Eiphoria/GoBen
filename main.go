@@ -2,14 +2,20 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"golang.org/x/exp/slog"
 	"layeh.com/gopus"
 )
 
@@ -20,8 +26,35 @@ const (
 	MAX_BYTES  int = (FRAME_SIZE * 2) * 2
 )
 
+func Infof(logger *slog.Logger, format string, args ...any) {
+	if !logger.Enabled(context.Background(), slog.LevelInfo) {
+		return
+	}
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:]) // skip [Callers, Infof]
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, fmt.Sprintf(format, args...), pcs[0])
+	_ = logger.Handler().Handle(context.Background(), r)
+}
+
 func main() {
-	fmt.Println("Launching GoBen...")
+	replace := func(groups []string, a slog.Attr) slog.Attr {
+		// Remove time.
+		if a.Key == slog.TimeKey && len(groups) == 0 {
+			return slog.Attr{}
+		}
+		// Remove the directory from the source's filename.
+		if a.Key == slog.SourceKey {
+			source := a.Value.Any().(*slog.Source)
+			source.File = filepath.Base(source.File)
+		}
+		return a
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource:   true,
+		Level:       nil,
+		ReplaceAttr: replace,
+	}))
+	Infof(logger, "[INFO]: %s", "Launching GoBen...")
 	envVarName := "DPP_TOKEN"
 	token := os.Getenv(envVarName)
 	if token == "" {
@@ -29,46 +62,43 @@ func main() {
 		os.Exit(1)
 		// return
 	}
-	fmt.Println("Pass token check")
+	Infof(logger, "[INFO]: %s", "Pass token check")
 	s, err := discordgo.New("Bot " + token)
 	if err != nil {
 		fmt.Println("error creating Discord session:", err)
 		return
 	}
-	fmt.Println("Create bot")
+	Infof(logger, "[INFO]: %s", "Bot created")
 	defer s.Close()
 
 	// Register messageCreate as a callback for the messageCreate events.
-	fmt.Println("try add handler")
+	Infof(logger, "[INFO]: %s", "Add handlers")
 	s.AddHandler(messageCreate)
 
-	fmt.Println("trying open websocket")
+	Infof(logger, "[INFO]: %s", "Open WebSocket")
 	err = s.Open()
 	if err != nil {
 
 		fmt.Println("error opening connection:", err)
 		return
 	}
-	fmt.Println("after open websocket")
-	fmt.Println("Started")
+
+	Infof(logger, "[INFO]: %s", "Bot Started")
 	<-make(chan struct{})
 
 }
-
-// This function will be called (due to AddHandler above) when the bot receives
-// the "ready" event from Discord.
 
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the autenticated bot has access to.
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// Ignore all messages created by the bot itself
-	// This isn't required in this specific example but it's a good practice.
+	// It's a good practice.
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
-	fmt.Println("message: ", m.Content)
-	// check if the message is "!airhorn"
+
+	// check if the message contain ".play" command
 	if strings.HasPrefix(m.Content, ".play") {
 
 		fmt.Println("message: ", m.Content)
@@ -92,7 +122,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		for _, vs := range g.VoiceStates {
 			if vs.UserID == m.Author.ID {
 				fmt.Println(vs.UserID, " == ", m.Author.ID)
-				err = playSound(s, g.ID, vs.ChannelID)
+				err = playSound(s, g.ID, vs.ChannelID, m.Content)
 				if err != nil {
 					fmt.Println("Error playing sound:", err)
 				}
@@ -131,15 +161,62 @@ func sendPCM(voice *discordgo.VoiceConnection, pcm <-chan []int16) {
 	}
 }
 
-func playSound(s *discordgo.Session, guildID, channelID string) (err error) {
+func extractYouTubeURL(input string) string {
+	// Убираем .play из строки
+	input = strings.TrimPrefix(input, ".play ")
+
+	// Используем регулярное выражение для поиска ссылки на YouTube
+	re := regexp.MustCompile(`https://www\.youtube\.com/watch\?v=[a-zA-Z0-9_-]+`)
+	match := re.FindString(input)
+
+	if match != "" {
+		return match
+	}
+
+	return ""
+}
+
+func getYoutubeAudioURL(input string) string {
+	cmd := exec.Command("youtube-dl", "--get-url", "--format", "bestaudio", input)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Println("Ошибка выполнения команды:", err)
+		return ""
+	}
+
+	url := strings.TrimSpace(string(output))
+	if strings.HasPrefix(url, "https://") {
+		return url
+	}
+
+	return ""
+}
+
+func playSound(s *discordgo.Session, guildID, channelID string, message string) (err error) {
 	fmt.Println("Enter: func playSound")
+
 	// Join the provided voice channel.
+
+	url := extractYouTubeURL(message)
+	if url == "" {
+		return
+	}
+
+	ytSrcLink := getYoutubeAudioURL(url)
+	if ytSrcLink == "" {
+		return
+	}
+
+	// ytSrcLink := "https://rr1---sn-4upjvh-qv3z.googlevideo.com/videoplayback?expire=1697053539&ei=A6cmZZKAGc3ryAWpnKeABw&ip=5.153.158.77&id=o-AA1CJy595sZvwYkV1Wn0M_7kKhLJxY1mAAL8UXppMBET&itag=251&source=youtube&requiressl=yes&mh=Ul&mm=31%2C29&mn=sn-4upjvh-qv3z%2Csn-3c27sn7e&ms=au%2Crdu&mv=m&mvi=1&pl=24&gcr=ua&initcwndbps=908750&spc=UWF9fwBaJOKgJ6NmtXMw4Bny1Y0JCS69FKy-K1t6Xw&vprv=1&svpuc=1&mime=audio%2Fwebm&gir=yes&clen=1159641&dur=65.741&lmt=1657130529487498&mt=1697031494&fvip=3&keepalive=yes&fexp=24007246&beids=24472435&c=ANDROID&txp=2318224&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cgcr%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Cgir%2Cclen%2Cdur%2Clmt&sig=AGM4YrMwRAIgBVOrCPOZAGDtg5MwG-kG5amDdvwlxC5tL8OcQPV60UMCIDtZ6LXMPnC6cTp8C3uCrzp6ClHC8HKCK5PIbP8ZKAcA&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Cinitcwndbps&lsig=AK1ks_kwRAIgI9jLyocL8gzMMACA606CWuVyDmCpcxjCrb2_V-kQFPICICKk7AHVoV3h6u4LIhPzcxWuU8qx7HvSa9N4Zol-iiNm"
+	// link := make(chan []int16, 2)
+
 	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
 	if err != nil {
 		return err
 	}
-	ytSrcLink := "https://rr1---sn-4upjvh-qv3z.googlevideo.com/videoplayback?expire=1696900346&ei=mlAkZZXOMbe20u8PhMy-iAU&ip=5.153.158.77&id=o-AFv8N5Jf1m19gQ3z4mvXbrEwcS7ObsBHYsI7Ds3w0a0C&itag=251&source=youtube&requiressl=yes&mh=Ul&mm=31%2C29&mn=sn-4upjvh-qv3z%2Csn-3c27sn7e&ms=au%2Crdu&mv=m&mvi=1&pl=24&gcr=ua&initcwndbps=772500&spc=UWF9f811LzR8RcthhKoxK_8bx4BNdk6mqT7NRNuQDQ&vprv=1&svpuc=1&mime=audio%2Fwebm&gir=yes&clen=1159641&dur=65.741&lmt=1657130529487498&mt=1696878308&fvip=3&keepalive=yes&fexp=24007246&beids=24350018&c=ANDROID&txp=2318224&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cgcr%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Cgir%2Cclen%2Cdur%2Clmt&sig=AGM4YrMwRgIhANSkkwaOXF-JAZghWQPEBhvyb1TX4bPU3DJC3yntHNB0AiEA97bf0oi7Z2lOEdF9ZW2PnZx6D-aMUcIb0qBo_mkjJH4%3D&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Cinitcwndbps&lsig=AK1ks_kwRQIhAOAHsO7eA5-Qjpou8vrE2fW_l4IzXii36XZmVHl1EdscAiBSBVONuktP_KKrH0wQZ68bQe7-MKdK2y0MFCCum0IJDA%3D%3D"
-	// link := make(chan []int16, 2)
+
+	defer vc.Disconnect()
 
 	ffmpeg := exec.Command("ffmpeg", "-i", ytSrcLink, "-f", "s16le", "-ar", "48000", "-ac",
 		"2", "pipe:1")
@@ -160,9 +237,8 @@ func playSound(s *discordgo.Session, guildID, channelID string) (err error) {
 	// Start speaking.
 	vc.Speaking(true)
 	go sendPCM(vc, send)
-	// Stop speaking when function is done or break
 	defer vc.Speaking(false)
-	defer vc.Disconnect()
+	// Stop speaking when function is done or break
 
 	for {
 
