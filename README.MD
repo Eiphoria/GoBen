@@ -3,5 +3,4 @@
 Dependency:
 
 - OS env var: DPP_TOKEN
-- ffmpeg in PATH
-- youtube-dl or yt-dlp(renamed to youtube-dl) in PATH
+- ffmpeg, dca(Discord Audio encoder), youtube-dl or yt-dlp(renamed to youtube-dl) in PATH
