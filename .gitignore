@@ -21,8 +21,11 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 .vscode/
+localfiles/
 
 # Go workspace file
 go.work
+go.mod
+go.sum
 
 # End of https://www.toptal.com/developers/gitignore/api/go
