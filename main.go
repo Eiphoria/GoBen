@@ -202,34 +202,6 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 
-// func sendPCM(voice *discordgo.VoiceConnection, pcm <-chan []int16) {
-
-// 	encoder, err := gopus.NewEncoder(FRAME_RATE, CHANNELS, gopus.Audio)
-// 	if err != nil {
-// 		fmt.Println("NewEncoder error,", err)
-// 		return
-// 	}
-
-// 	for {
-// 		receive, ok := <-pcm
-// 		if !ok {
-// 			fmt.Println("PCM channel closed")
-// 			return
-// 		}
-// 		opus, err := encoder.Encode(receive, FRAME_SIZE, MAX_BYTES)
-// 		if err != nil {
-// 			fmt.Println("Encoding error,", err)
-// 			return
-// 		}
-// 		// fmt.Println(!voice.Ready, voice.OpusSend == nil)
-// 		if !voice.Ready || voice.OpusSend == nil {
-// 			fmt.Printf("Discordgo not ready for opus packets. %+v : %+v", voice.Ready, voice.OpusSend)
-// 			return
-// 		}
-// 		voice.OpusSend <- opus
-// 	}
-// }
-
 func extractYouTubeURL(input string) string {
 	// Убираем .play из строки
 	input = strings.TrimPrefix(input, ".play ")
@@ -276,7 +248,7 @@ func playSound(s *discordgo.Session, guildID, channelID string, message string) 
 		return err
 	}
 
-	dca := exec.Command("dca.exe", "pipe:0")
+	dca := exec.Command("dca", "pipe:0")
 	dca.Stdin = bufio.NewReaderSize(out, 1024)
 	dcaout, err := dca.StdoutPipe()
 	if err != nil {
