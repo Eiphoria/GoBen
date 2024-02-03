@@ -3,6 +3,4 @@
 Dependency:
 
 - OS env var: DPP_TOKEN
-- ffmpeg in PATH
-- youtube-dl or yt-dlp(renamed to youtube-dl) in PATH
-- installed DCA.exe in GOPATH (go install github.com/bwmarrin/dca/cmd/dca@latest)
+- ffmpeg, DCA(discordDCA) and youtube-dl or yt-dlp in PATH
