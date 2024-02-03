@@ -86,6 +86,24 @@ func main() {
 		ReplaceAttr: replace,
 	}))
 	Infof(logger, "[INFO]: %s", "Launching GoBen...")
+	replace = func(groups []string, a slog.Attr) slog.Attr {
+		// Remove time.
+		if a.Key == slog.TimeKey && len(groups) == 0 {
+			return slog.Attr{}
+		}
+		// Remove the directory from the source's filename.
+		if a.Key == slog.SourceKey {
+			source := a.Value.Any().(*slog.Source)
+			source.File = filepath.Base(source.File)
+		}
+		return a
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource:   true,
+		Level:       nil,
+		ReplaceAttr: replace,
+	}))
+	Infof(logger, "[INFO]: %s", "Launching GoBen...")
 	envVarName := "DPP_TOKEN"
 	token := os.Getenv(envVarName)
 	if token == "" {
@@ -99,10 +117,12 @@ func main() {
 		fmt.Println("error creating Discord session:", err)
 		return
 	}
+
 	Infof(logger, "[INFO]: %s", "Bot created")
 	defer s.Close()
 
 	// Register messageCreate as a callback for the messageCreate events.
+
 	Infof(logger, "[INFO]: %s", "Add handlers")
 	s.AddHandler(messageCreate)
 
@@ -203,10 +223,9 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func extractYouTubeURL(input string) string {
-	// Убираем .play из строки
+
 	input = strings.TrimPrefix(input, ".play ")
 
-	// Используем регулярное выражение для поиска ссылки на YouTube
 	re := regexp.MustCompile(`https://www\.youtube\.com/watch\?v=[a-zA-Z0-9_-]+`)
 	match := re.FindString(input)
 
@@ -233,7 +252,7 @@ func playSound(s *discordgo.Session, guildID, channelID string, message string) 
 
 	defer vc.Disconnect()
 
-	ytdl := exec.Command("youtube-dl", "-v", "-f", "bestaudio", "-o", "-", url)
+	ytdl := exec.Command("yt-dlp", "-v", "-f", "bestaudio", "-o", "-", url)
 
 	ytdlout, err := ytdl.StdoutPipe()
 	if err != nil {
