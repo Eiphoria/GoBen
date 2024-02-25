@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"encoding/binary"
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -16,6 +13,8 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/jonas747/dca"
+	"github.com/kkdai/youtube/v2"
 )
 
 const (
@@ -218,86 +217,51 @@ func playSound(s *discordgo.Session, guildID, channelID string) error {
 		if err != nil {
 			if err.Error() == "queue is empty" {
 				logMessage("Queue is empty. Ending playback.", "INFO")
-				vc.Speaking(false)
-				time.Sleep(time.Millisecond * 400)
-				vc.Disconnect()
+				defer vc.Speaking(false)
+				defer vc.Disconnect()
 				delete(queueMap, guildID)
 				return nil
 			}
 		}
 		queueMap[guildID] = queue
 
-		ytdl := exec.Command("yt-dlp", "-v", "-f", "bestaudio", "-o", "-", url)
+		options := dca.StdEncodeOptions
+		options.FrameDuration = 20
+		options.Bitrate = 128
+		options.Application = "lowdelay"
 
-		ytdlout, err := ytdl.StdoutPipe()
+		ctx := context.Background()
+		client := youtube.Client{}
+		ytvideo, err := client.GetVideoContext(ctx, url)
 		if err != nil {
-			logMessage("ytdl stdout pipe: "+err.Error(), "ERROR")
-			return fmt.Errorf("ytdl stdout pipe: %w", err)
-		}
-		ytdlbuf := bufio.NewReaderSize(ytdlout, 16384)
+			logMessage("error getvideocontext(): "+err.Error(), "ERROR")
+			return fmt.Errorf("error getvideocontext(): %w", err)
 
-		ffmpeg := exec.Command("ffmpeg", "-i", "pipe:0", "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
-		ffmpeg.Stdin = ytdlbuf
-		out, err := ffmpeg.StdoutPipe()
+		}
+		video, err := client.GetVideo(ytvideo.ID)
 		if err != nil {
-			logMessage("ffmpeg stdout pipe: "+err.Error(), "ERROR")
-			return fmt.Errorf("ffmpeg stdout pipe: %w", err)
+			logMessage("error getvideo(): "+err.Error(), "ERROR")
+			return fmt.Errorf("error getvideo(): %w", err)
 		}
-
-		dca := exec.Command("dca", "pipe:0")
-		dca.Stdin = bufio.NewReaderSize(out, 1024)
-		dcaout, err := dca.StdoutPipe()
+		formats := video.Formats.WithAudioChannels().Itag(251)
+		stream, _, err := client.GetStream(video, &formats[0])
 		if err != nil {
-			logMessage("dca stdout pipe: "+err.Error(), "ERROR")
-			return fmt.Errorf("dca stdout pipe: %w", err)
+			logMessage("error getstream(): "+err.Error(), "ERROR")
+			return fmt.Errorf("error getstream(): %w", err)
 		}
+		encodingSession, err := dca.EncodeMem(stream, options)
+		if err != nil {
+			logMessage("error in encodefile(): "+err.Error(), "ERROR")
+			return fmt.Errorf("error in encodefile(): %s", err)
 
-		if err = ytdl.Start(); err != nil {
-			logMessage("ytdl start: "+err.Error(), "ERROR")
-			return fmt.Errorf("ytdl start: %w", err)
 		}
-
-		defer ytdl.Wait()
-
-		if err = ffmpeg.Start(); err != nil {
-			logMessage("ffmpeg start: "+err.Error(), "ERROR")
-			return fmt.Errorf("ffmpeg start: %w", err)
-		}
-
-		defer ffmpeg.Wait()
-
-		if err = dca.Start(); err != nil {
-			logMessage("dca start: "+err.Error(), "ERROR")
-			return fmt.Errorf("dca start: %w", err)
-		}
-
-		defer dca.Wait()
-
-		var opuslen int16
-
-		vc.Speaking(true)
-
-		dcaBuf := bufio.NewReaderSize(dcaout, 1024)
-		for {
-			if err = binary.Read(dcaBuf, binary.LittleEndian, &opuslen); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					break
-				}
-				logMessage("binary read opuslen: "+err.Error(), "ERROR")
-				return fmt.Errorf("binary read opuslen: %w", err)
-			}
-
-			opus := make([]byte, opuslen)
-			if err = binary.Read(dcaBuf, binary.LittleEndian, &opus); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					break
-				}
-				if err != nil {
-					logMessage("binary read opus: "+err.Error(), "ERROR")
-					return fmt.Errorf("binary read opus: %w", err)
-				}
-			}
-			vc.OpusSend <- opus
+		defer encodingSession.Cleanup()
+		done := make(chan error)
+		dca.NewStream(encodingSession, vc, done)
+		err = <-done
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			logMessage("i dont know what is it error about: "+err.Error(), "ERROR")
+			return fmt.Errorf("i dont know what is it error about: %s", err)
 		}
 	}
 }
