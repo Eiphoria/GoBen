@@ -194,11 +194,12 @@ func extractYouTubeURL(input string) string {
 
 	input = strings.TrimPrefix(input, ".play ")
 
-	re := regexp.MustCompile(`https://www\.youtube\.com/watch\?v=[a-zA-Z0-9_-]+`)
-	match := re.FindString(input)
+	re := regexp.MustCompile(`(?:https?://)?(?:www\.|m\.)?youtu(?:\.be/|be\.com/(?:watch\?(?:feature=[a-z_]+&)?v=|v/|embed/|user/(?:[^\s]+/)+|shorts/))([^?&/\s]+)`)
 
-	if match != "" {
-		return match
+	match := re.FindStringSubmatch(input)
+
+	if len(match) > 1 {
+		return "http://www.youtube.com/watch?v=" + match[1]
 	}
 
 	return ""
@@ -288,14 +289,12 @@ func playSound(s *discordgo.Session, guildID, channelID string) error {
 			}
 
 			opus := make([]byte, opuslen)
-			if err = binary.Read(dcaBuf, binary.LittleEndian, &opus); err != nil {
+			if err := binary.Read(dcaBuf, binary.LittleEndian, &opus); err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 					break
 				}
-				if err != nil {
-					logMessage("binary read opus: "+err.Error(), "ERROR")
-					return fmt.Errorf("binary read opus: %w", err)
-				}
+				logMessage("binary read opus: "+err.Error(), "ERROR")
+				return fmt.Errorf("binary read opus: %w", err)
 			}
 			vc.OpusSend <- opus
 		}
